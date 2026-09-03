@@ -17,6 +17,92 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'citas-service' });
 });
 
+// GET /setup — crea las tablas y carga datos de ejemplo (solo para inicializar)
+app.get('/setup', async (_req, res) => {
+  try {
+    await db.query('DROP TABLE IF EXISTS recordatorios_enviados, citas, pacientes, horarios_disponibles, doctores, especialidades CASCADE');
+
+    await db.query(`
+      CREATE TABLE especialidades (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL UNIQUE
+      )`);
+
+    await db.query(`
+      CREATE TABLE doctores (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        especialidad_id INTEGER REFERENCES especialidades(id),
+        ciudad TEXT,
+        tarifa_consulta NUMERIC(10,2) NOT NULL DEFAULT 0,
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`);
+
+    await db.query(`
+      CREATE TABLE horarios_disponibles (
+        id SERIAL PRIMARY KEY,
+        doctor_id INTEGER REFERENCES doctores(id) ON DELETE CASCADE,
+        dia_semana INTEGER NOT NULL CHECK (dia_semana BETWEEN 0 AND 6),
+        hora_inicio TIME NOT NULL,
+        hora_fin TIME NOT NULL
+      )`);
+
+    await db.query(`
+      CREATE TABLE pacientes (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        correo TEXT NOT NULL UNIQUE,
+        telefono TEXT,
+        fecha_nacimiento DATE,
+        numero_seguro TEXT,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`);
+
+    await db.query(`
+      CREATE TABLE citas (
+        id SERIAL PRIMARY KEY,
+        paciente_id INTEGER REFERENCES pacientes(id),
+        doctor_id INTEGER REFERENCES doctores(id),
+        fecha_hora TIMESTAMPTZ NOT NULL,
+        modalidad TEXT NOT NULL CHECK (modalidad IN ('presencial', 'virtual')),
+        estado TEXT NOT NULL DEFAULT 'pendiente'
+          CHECK (estado IN ('pendiente', 'confirmada', 'completada', 'cancelada')),
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+        actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`);
+
+    await db.query(`
+      CREATE TABLE recordatorios_enviados (
+        id SERIAL PRIMARY KEY,
+        cita_id INTEGER REFERENCES citas(id) ON DELETE CASCADE,
+        canal TEXT NOT NULL CHECK (canal IN ('email', 'sms')),
+        estado_envio TEXT,
+        intentos INTEGER NOT NULL DEFAULT 0,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`);
+
+    await db.query(`INSERT INTO especialidades (nombre) VALUES ('Cardiología'), ('Dermatología'), ('Pediatría')`);
+    await db.query(`INSERT INTO doctores (nombre, especialidad_id, ciudad, tarifa_consulta) VALUES
+      ('Dra. Ana Torres', 1, 'Bogotá', 150000),
+      ('Dr. Luis Pérez', 2, 'Medellín', 120000),
+      ('Dra. María Gómez', 3, 'Cali', 130000)`);
+    await db.query(`INSERT INTO horarios_disponibles (doctor_id, dia_semana, hora_inicio, hora_fin) VALUES
+      (1, 1, '08:00', '12:00'),
+      (1, 3, '14:00', '18:00'),
+      (2, 2, '09:00', '13:00'),
+      (3, 4, '10:00', '14:00')`);
+    await db.query(`INSERT INTO pacientes (nombre, correo, telefono, fecha_nacimiento) VALUES
+      ('Carlos Ruiz', 'carlos.ruiz@example.com', '3001234567', '1990-05-20')`);
+    await db.query(`INSERT INTO citas (paciente_id, doctor_id, fecha_hora, modalidad, estado) VALUES
+      (1, 1, now() + interval '1 day', 'virtual', 'pendiente')`);
+
+    res.json({ status: 'ok', message: 'Base inicializada con tablas y datos de ejemplo' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /doctores  — búsqueda por especialidad y/o ciudad
 app.get('/doctores', async (req, res) => {
   try {
